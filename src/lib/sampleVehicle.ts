@@ -13,7 +13,6 @@ interface SampleVehicleTemplate {
 const SAMPLE_VEHICLES: SampleVehicleTemplate[] = [
   { vin: "JTDACAAU5R3000001", name: "2024 Toyota Prius XLE", modelYear: 2024 },
   { vin: "1HGCM82633A004352", name: "2023 Honda Accord EX-L", modelYear: 2023 },
-  { vin: "5YJ3E1EA7KF317000", name: "2019 Tesla Model 3 Long Range", modelYear: 2019 },
   { vin: "1FTFW1ET5DFC10312", name: "2021 Ford F-150 XLT", modelYear: 2021 },
   { vin: "4S4BSANC5N3123456", name: "2022 Subaru Outback Premium", modelYear: 2022 },
 ];
