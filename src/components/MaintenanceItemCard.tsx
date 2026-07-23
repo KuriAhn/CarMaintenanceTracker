@@ -38,11 +38,16 @@ export default function MaintenanceItemCard({ item, vehicle, onClick }: Maintena
 
       <div className="flex w-full flex-col gap-4 pl-4">
         <div className="flex w-full items-center gap-2 text-2xl font-medium whitespace-nowrap">
-          {computed.targetMileageLabel && <p className="text-black">{computed.targetMileageLabel}</p>}
-          {computed.targetMileageLabel && computed.targetDateLabel && (
-            <p className="text-muted-2">/</p>
+          {(computed.targetMileageLabel || computed.targetDateLabel) && (
+            <p className="text-black">Due at</p>
           )}
-          {computed.targetDateLabel && <p className="text-black">{computed.targetDateLabel}</p>}
+          {computed.targetMileageLabel && (
+            <p className="text-accent-blue">{computed.targetMileageLabel}</p>
+          )}
+          {computed.targetMileageLabel && computed.targetDateLabel && (
+            <p className="text-black">or</p>
+          )}
+          {computed.targetDateLabel && <p className="text-accent-blue">{computed.targetDateLabel}</p>}
         </div>
 
         <div className="flex w-full flex-col gap-2">

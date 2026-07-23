@@ -346,6 +346,33 @@ that part blue instead... use full white. I don't know why it's gray").
   equivalent change — it's real, already-visible wheel/hub geometry, so
   `paintPart` recolors the actual wheel surfaces directly.
 
+## Features (cont'd, 2026-07-22) — Figma frame 6:1044 sync: text color, "Due at" wording, section-header pills
+- **`#000000` → `#333333` project-wide**: rather than hunting down every
+  `text-black`/`bg-black`/`border-black` usage individually, overrode
+  Tailwind's built-in `black` token itself — `index.css`'s `@theme` block now
+  defines `--color-black: #333333`. Tailwind v4 resolves utility colors from
+  theme CSS variables, so this one line repoints every existing `black`-based
+  class (including opacity variants like the modal backdrop's `bg-black/60`
+  and the `DetailPanel`/Figma-frame `EASY`/`MEDIUM`/`HARD` badge's
+  `bg-black`) to the new value with no per-file edits. Matches the Figma
+  source of truth, which uses `#333` instead of pure black throughout.
+- **`MaintenanceItemCard`'s due line reworded** to "Due at {mileage} or
+  {date}" (was "{mileage} / {date}", no "Due at" prefix, no color on the
+  values) — matches the mockup's first-item variant (frame 6:1044, node
+  18:55). "Due at" and "or" render in the (now-#333333) black; the mileage/
+  date values themselves render `text-accent-blue`, also per the mockup.
+  Single-interval items (only `intervalMiles` or only `intervalMonths` set,
+  e.g. "Coolant flush"/"Brake fluid flush") correctly drop the "or" and show
+  just "Due at {value}" — same null-handling as before, just re-derived
+  around the new prefix/"or" pieces.
+- **Removed the gray "never" pill from `StatusLegend`** (section headers
+  now show only the green/yellow/red count pills, matching the mockup) —
+  `LEGEND_ITEMS` no longer has a `never` entry. Deliberately left
+  `MaintenanceSection`'s `counts.never` computation and the `never` status/
+  color elsewhere (item dot, progress bar — see the 2026-07-19 "never
+  completed" entry above) untouched; only the section-header legend pill
+  itself was removed, not the underlying status.
+
 ## Rules & Preferences
 - When decoding VIN data, watch for NHTSA's `Model`/`Trim` fields
   overlapping (e.g. model "Santa Fe Sport" + trim "Sport 2WD" →

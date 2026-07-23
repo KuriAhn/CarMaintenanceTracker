@@ -3,6 +3,11 @@
 @theme {
   --font-sans: "Manrope", sans-serif;
 
+  /* Overrides Tailwind's built-in black (#000) — every text-black/bg-black/
+     border-black usage in this project should render as #333333, not pure
+     black (matches the Figma source of truth). */
+  --color-black: #333333;
+
   --color-page-bg: #f8f8f8;
   --color-card-border: #f2f2f2;
   --color-divider: #e6e6e6;

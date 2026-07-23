@@ -8,7 +8,6 @@ const LEGEND_ITEMS: { key: keyof StatusCounts; dot: string; text: string }[] = [
   { key: "green", dot: "bg-status-green", text: "text-status-green-text" },
   { key: "yellow", dot: "bg-status-yellow", text: "text-status-yellow-text" },
   { key: "red", dot: "bg-status-red", text: "text-status-red-text" },
-  { key: "never", dot: "bg-progress-track", text: "text-muted" },
 ];
 
 export default function StatusLegend({ counts }: StatusLegendProps) {
