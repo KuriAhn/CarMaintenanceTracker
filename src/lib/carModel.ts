@@ -31,36 +31,38 @@ export const ACCENT_COLOR = 0x1059e0;
 // onBeforeRender hook, so no manual resize wiring is needed here.
 // polygonOffset pulls the edge lines a hair toward the camera: their geometry
 // sits exactly on the mesh surface it traces (zero gap), which z-fights with
-// that surface — invisible on a static frame (same winner every pixel) but
-// flickers during camera motion as float rounding nudges the winner back and
-// forth (a line loses the z-fight for a frame and the white surface shows
-// through where it should be, reading as the outline "turning white"). The
-// factor/units below were doubled from the original fix once the body grew a
-// much bigger bevel + sloped nose/tail (more, closer-together edges at more
-// oblique angles during free rotation) — the original margin wasn't enough.
+// that surface — invisible on a static frame at most angles/distances (same
+// winner every pixel) but flickers/dashes where the margin is marginal (a
+// line loses the z-fight for part of its length and the white surface shows
+// through, reading as the outline "turning white" or, in a static frame,
+// as a dashed/broken line). Doubled twice now (-1/-4 -> -2/-8 -> -4/-16):
+// the first doubling covered ordinary free-rotation at the default zoom: the
+// second was needed after finding a still-dashed edge at a hotspot zone's
+// close camera distance (~5.5, vs the default view's 10) and a moderate
+// (non-grazing) viewing angle — polygonOffset's factor term scales with a
+// triangle's screen-space depth slope, which is small for a roughly camera-
+// facing triangle, so at closer zoom the mostly-constant `units` term needs
+// to be bigger in absolute terms to keep covering the same world-space gap.
 export const edgeMaterial = new LineMaterial({
   color: EDGE_COLOR,
   linewidth: EDGE_WIDTH,
   worldUnits: false,
   polygonOffset: true,
-  polygonOffsetFactor: -2,
-  polygonOffsetUnits: -8,
+  polygonOffsetFactor: -4,
+  polygonOffsetUnits: -16,
 });
 
-// For outlines on "flush" elements (buildDecal, buildHeadlight) whose fill uses
-// depthTest:false to guarantee it always draws on the surface it sits on — their
-// EdgesGeometry lines need the same treatment. edgeMaterial above still depth-tests
-// (just with a polygon offset nudge), which is correct for real body geometry, but
-// would make a flush element's outline lose the depth test against the actual body
-// surface directly underneath it and disappear — the fill would still show (also
-// depthTest:false) but blend in, since it's the same BODY_COLOR white.
-const flushEdgeMaterial = new LineMaterial({
-  color: EDGE_COLOR,
-  linewidth: EDGE_WIDTH,
-  worldUnits: false,
-  depthTest: false,
-  depthWrite: false,
-});
+// Complements edgeMaterial's own polygonOffset (which pulls the outline lines
+// toward the camera) by pushing real fill surfaces slightly away from it —
+// a bigger combined gap between coincident geometry from both sides, instead
+// of relying on the line's offset alone to fully resolve the z-fight. Only
+// spread into materials for real (depth-tested) body geometry — buildDecal/
+// buildHeadlight already use depthTest:false, where polygonOffset is a no-op.
+const FILL_POLYGON_OFFSET = {
+  polygonOffset: true,
+  polygonOffsetFactor: 2,
+  polygonOffsetUnits: 8,
+} as const;
 
 // Car faces +X (nose/front) / -X (tail/rear). Width along Z, height along Y,
 // ground at y=0.
@@ -128,42 +130,62 @@ const NOTCH_TOP_Y = WHEEL_RADIUS * 2 + ARCH_MARGIN; // 1.05 — where the open n
 // insets from each end of that short edge overlapping. 0.15 leaves margin.
 const BODY_BEVEL = 0.15;
 
-// Tried raising this to a smooth many-segment round (the same idea used for
-// CABIN_BEVEL_SEGMENTS below): a 90deg corner split into enough segments puts
-// each facet-to-facet angle under EdgesGeometry's threshold, so no lines show on
-// the curve at all — genuinely smooth, not a faceted chamfer. It corrupted the
-// *entire* body's triangulation instead, at every bevel size tried down to 0.05,
-// not just a local glitch near the wheel arches. The wheel-arch notch corners are
-// reflex (concave), and ExtrudeGeometry's bevel is a simple per-vertex miter
-// offset, not a robust straight-skeleton one — at a reflex corner that miter can
-// overshoot by far more than the nominal bevel size, and once it crosses the
-// outline earcut's triangulation breaks for the whole shape, not just that corner.
-// Staying at 1 segment (a single offset, nothing to compound) is the proven-safe
-// choice here — see buildCabinGeometry for the smooth-round version, safe there
-// because the cabin's 4 corners are all convex, no reflex corner to overshoot at.
+// Tried raising this to a smooth many-segment round: a 90deg corner split
+// into enough segments puts each facet-to-facet angle under EdgesGeometry's
+// threshold, so no lines show on the curve at all — genuinely smooth, not a
+// faceted chamfer. It corrupted the *entire* body's triangulation instead,
+// at every bevel size tried down to 0.05, not just a local glitch near the
+// wheel arches. The wheel-arch notch corners are reflex (concave), and
+// ExtrudeGeometry's bevel is a simple per-vertex miter offset, not a robust
+// straight-skeleton one — at a reflex corner that miter can overshoot by far
+// more than the nominal bevel size, and once it crosses the outline earcut's
+// triangulation breaks for the whole shape, not just that corner. Staying at
+// 1 segment (a single offset, nothing to compound) is the proven-safe choice
+// here. (The cabin has no reflex corners, so it never had this specific
+// problem — but many-segment bevels there hit a different issue instead; see
+// CABIN_BEVEL_SEGMENTS below.)
 const BODY_BEVEL_SEGMENTS = 1;
 
+// Tried a second approach — rounding the body profile's 8 convex corners
+// directly in the 2D shape via quadraticCurveTo, sidestepping the reflex-
+// corner bevel limitation above entirely (only ever touching corners known
+// safe by construction, leaving the 4 reflex wheel-arch corners as sharp
+// lineTo joins). The resulting geometry itself was verified sound — no
+// self-intersection, no NaNs, correct triangulation, and it visually
+// rendered fine across a wide orbit sweep. But it introduced a new, real,
+// narrow-but-reproducible bug: at specific extreme near-top-down/near-
+// bottom-up camera angles (reachable via normal free rotation), large
+// stretches of the body's outline vanished — confirmed via wireframe (mesh
+// itself intact) and a double-sided colored-fill test (fill intact, only
+// the LineSegments2 edge lines failed to draw). Root cause: three.js's
+// "fat lines" (LineSegments2) renderer computes each line's screen-space
+// width from its projected on-screen direction; the extra edges/vertices
+// this rounding approach added made it far more likely for a cluster of
+// (mostly parallel, roof/sill-aligned) edges to simultaneously hit a
+// viewing angle where their projected direction degenerates near zero-
+// length, which the width shader can't handle. The original chamfered
+// body (below) has too few/differently-positioned edges to hit this in
+// practice. Reverted rather than chasing a robust fix for a three.js-level
+// fat-line limitation — see git history for the rounded-corner version if
+// revisiting this.
+
 // Cabin's wedge has 4 purely convex corners (no reflex/concave points like the
-// body's wheel arches), so the many-segment smooth-round approach is safe here:
-// each ~90deg-or-less corner split 12 ways puts every facet-to-facet angle under
-// EdgesGeometry's 12deg threshold, so the whole curve renders with no lines at
-// all — a genuinely smooth round read from the silhouette, not a faceted chamfer.
-const CABIN_BEVEL_SEGMENTS = 12;
+// body's wheel arches), so the earcut-corruption risk that keeps
+// BODY_BEVEL_SEGMENTS at 1 never applied here — a many-segment smooth round
+// (each ~90deg-or-less corner split 12 ways, putting every facet-to-facet
+// angle under EdgesGeometry's threshold) was used for a while. But it turned
+// out to hit the *other* documented bevel-segment problem instead: the same
+// fat-line (LineSegments2) screen-space-width degeneracy that broke the
+// body's rounded corners (see BODY_BEVEL_SEGMENTS above) — visible here as
+// the flat roof edge rendering noticeably thinner than the rest of the car
+// even at the default camera angle, not just an extreme one. Reverted to a
+// plain single-facet chamfer, matching the body's proven-safe choice.
+const CABIN_BEVEL_SEGMENTS = 1;
 
 function addEdges(mesh: THREE.Mesh, thresholdAngle = 15): void {
   const edges = new THREE.EdgesGeometry(mesh.geometry, thresholdAngle);
   const lineGeometry = new LineSegmentsGeometry().fromEdgesGeometry(edges);
   const lines = new LineSegments2(lineGeometry, edgeMaterial);
-  mesh.add(lines);
-}
-
-// See flushEdgeMaterial above — same idea as addEdges, but for elements whose fill
-// already uses depthTest:false.
-function addFlushEdges(mesh: THREE.Mesh, thresholdAngle = 15): void {
-  const edges = new THREE.EdgesGeometry(mesh.geometry, thresholdAngle);
-  const lineGeometry = new LineSegmentsGeometry().fromEdgesGeometry(edges);
-  const lines = new LineSegments2(lineGeometry, flushEdgeMaterial);
-  lines.renderOrder = 1;
   mesh.add(lines);
 }
 
@@ -246,38 +268,42 @@ function buildCabinGeometry(): THREE.BufferGeometry {
 
 function buildWheel(z: number): THREE.Mesh {
   const geometry = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, WHEEL_THICKNESS, 14);
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: BODY_COLOR, ...FILL_POLYGON_OFFSET }));
   mesh.rotation.x = Math.PI / 2;
   mesh.position.set(0, WHEEL_RADIUS, z);
   addEdges(mesh, 20);
 
   const hubGeometry = new THREE.CylinderGeometry(WHEEL_RADIUS * 0.45, WHEEL_RADIUS * 0.45, WHEEL_THICKNESS + 0.02, 10);
-  const hub = new THREE.Mesh(hubGeometry, new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
+  const hub = new THREE.Mesh(hubGeometry, new THREE.MeshBasicMaterial({ color: BODY_COLOR, ...FILL_POLYGON_OFFSET }));
   addEdges(hub, 20);
   mesh.add(hub);
 
   return mesh;
 }
 
+// Lifts a flush decal/marker a hair off the surface it sits against, in place
+// of the depthTest:false + renderOrder trick this used to rely on. That trick
+// avoided the local z-fight against the coincident chassis surface directly
+// beneath a decal, but at the cost of a worse bug: with depth testing off
+// entirely, the decal drew *unconditionally* every frame — including when the
+// rest of the opaque car body should have been occluding it from other
+// viewing angles (reported as "I can see the headlights through the car").
+// A real (if tiny) position offset lets normal depth testing do both jobs at
+// once: it's plenty to win the local z-fight against the surface right below
+// it (0.01 world units is far above the depth-buffer precision floor at this
+// scene's scale/distances), while still correctly losing the depth test
+// against genuine occluders like the opposite side of the car body.
+const DECAL_OFFSET = 0.01;
+
 // The paintable region for a zone that has no distinct geometry of its own
 // (engine bay / battery / cowl on a car with no opening hood): a flat patch
-// painted directly onto the chassis surface, not a raised panel. It used to
-// be a thin box floating just above the chassis (a separate "layer"), which
-// still z-fought with the chassis surface underneath at some viewing angles
-// even with a polygon offset. A zero-thickness plane sitting exactly at the
-// chassis surface, rendered with depthTest off and a higher renderOrder, is
-// drawn unconditionally after (on top of) the chassis — there's no depth
-// value to compete over, so it can't flicker regardless of viewing angle or
-// distance. White and borderless by default so it blends invisibly into the
-// chassis; paintPart() recolors it when selected.
+// painted directly onto the chassis surface, not a raised panel. White and
+// borderless by default so it blends invisibly into the chassis; paintPart()
+// recolors it when selected.
 function buildDecal(width: number, depth: number, x: number, z: number): THREE.Mesh {
-  const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, depth),
-    new THREE.MeshBasicMaterial({ color: BODY_COLOR, depthTest: false, depthWrite: false })
-  );
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
   mesh.rotation.x = -Math.PI / 2; // lie flat, facing up
-  mesh.position.set(x, CHASSIS_TOP_Y, z);
-  mesh.renderOrder = 1; // draw after the (renderOrder 0) chassis beneath it
+  mesh.position.set(x, CHASSIS_TOP_Y + DECAL_OFFSET, z);
   return mesh;
 }
 
@@ -288,10 +314,11 @@ const HEADLIGHT_Z = 0.55; // within CHASSIS_WIDTH/2 (0.95), clear of the corner 
 // A plain geometric marker, not a colored light — "nothing colored unless
 // selected" rules out an actually-lit-looking accent color, so front/back is
 // conveyed by shape alone: two circular outlines on the nose only, matching
-// the rest of the car's white-fill/black-line look. Reuses buildDecal's flush-
-// mount trick (depthTest off, drawn after the body via renderOrder) so it
-// can't z-fight with the sloped nose surface it sits against, but — unlike a
-// paint decal — calls addEdges so the circle's outline is always visible, not
+// the rest of the car's white-fill/black-line look. Uses the same DECAL_OFFSET
+// real-separation trick as buildDecal (see its comment) so it doesn't z-fight
+// with the sloped nose surface it sits against, but IS still correctly
+// occluded by the rest of the body from other angles — unlike a paint decal,
+// this also calls addEdges so the circle's outline is always visible, not
 // just when painted. CircleGeometry's outer rim edges are pure mesh boundary
 // (each belongs to exactly one triangle), so EdgesGeometry always draws them
 // regardless of threshold — with enough segments that reads as a smooth
@@ -303,14 +330,10 @@ function buildHeadlight(z: number): THREE.Mesh {
   const slopeFraction = (HEADLIGHT_Y - CHASSIS_BOTTOM_Y) / (CHASSIS_TOP_Y - CHASSIS_BOTTOM_Y);
   const x = CHASSIS_LENGTH / 2 - NOSE_SLOPE * slopeFraction;
 
-  const mesh = new THREE.Mesh(
-    new THREE.CircleGeometry(HEADLIGHT_RADIUS, 24),
-    new THREE.MeshBasicMaterial({ color: BODY_COLOR, depthTest: false, depthWrite: false })
-  );
+  const mesh = new THREE.Mesh(new THREE.CircleGeometry(HEADLIGHT_RADIUS, 24), new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
   mesh.rotation.y = Math.PI / 2; // face +X, outward on the nose
-  mesh.position.set(x, HEADLIGHT_Y, z);
-  mesh.renderOrder = 1;
-  addFlushEdges(mesh, 20);
+  mesh.position.set(x + DECAL_OFFSET, HEADLIGHT_Y, z); // offset along the nose-outward normal (+X)
+  addEdges(mesh, 20);
   return mesh;
 }
 
@@ -330,11 +353,11 @@ export function buildCarModel(): CarModel {
   // One welded mesh for the whole lower body + upper shell (see
   // buildBodyGeometry) — reads as a single cohesive shape with the wheel
   // arches cut into it, not a stack of separate blocks.
-  const body = new THREE.Mesh(buildBodyGeometry(), new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
+  const body = new THREE.Mesh(buildBodyGeometry(), new THREE.MeshBasicMaterial({ color: BODY_COLOR, ...FILL_POLYGON_OFFSET }));
   addEdges(body, 12);
   car.add(body);
 
-  const cabin = new THREE.Mesh(buildCabinGeometry(), new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
+  const cabin = new THREE.Mesh(buildCabinGeometry(), new THREE.MeshBasicMaterial({ color: BODY_COLOR, ...FILL_POLYGON_OFFSET }));
   addEdges(cabin, 12);
   car.add(cabin);
 
